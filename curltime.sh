@@ -1,9 +1,27 @@
 #!/bin/bash
 
+# Function to display usage
+usage() {
+    echo "Usage: $0 [-a] [url] [attempts]"
+    echo "  -a: Prompt for authentication (username and password)"
+    exit 1
+}
+
+# Parse options
+AUTH=false
+while getopts "a" opt; do
+    case $opt in
+        a) AUTH=true ;;
+        *) usage ;;
+    esac
+done
+
+# Shift past options to get positional arguments
+shift $((OPTIND-1))
+
 # Check if URL is provided
 if [ -z "$1" ]; then
-    echo "Usage: $0 [url] [attempts]"
-    exit 1
+    usage
 fi
 
 URL="$1"
@@ -13,6 +31,15 @@ ATTEMPTS=${2:-1} # Default to 1 attempt if not specified
 if ! [[ "$ATTEMPTS" =~ ^[0-9]+$ ]] || [ "$ATTEMPTS" -lt 1 ]; then
     echo "Error: Attempts must be a positive integer"
     exit 1
+fi
+
+# Prompt for authentication if -a flag is used
+CURL_AUTH=""
+if [ "$AUTH" = true ]; then
+    read -p "Enter username: " username
+    read -s -p "Enter password: " password
+    echo
+    CURL_AUTH="-u $username:$password"
 fi
 
 # Initialize variables for summary calculations
@@ -33,9 +60,15 @@ printf "+-----------------------------------------------------------------------
 
 # Perform cURL requests
 for ((i=1; i<=ATTEMPTS; i++)); do
-    # Execute cURL and capture timing and response data
-    response=$(curl -s -o /dev/null -w "%{time_connect},%{time_starttransfer},%{time_redirect},%{time_namelookup},%{time_pretransfer},%{time_total},%{http_code},%{content_type}" "$URL")
+    # Execute cURL with optional authentication and capture timing and response data
+    response=$(curl -s -o /dev/null $CURL_AUTH -w "%{time_connect},%{time_starttransfer},%{time_redirect},%{time_namelookup},%{time_pretransfer},%{time_total},%{http_code},%{content_type}" "$URL")
     
+    # Check if cURL command failed
+    if [ $? -ne 0 ]; then
+        echo "Error: cURL request failed for attempt $i"
+        continue
+    fi
+
     # Split response into variables
     IFS=',' read -r time_connect time_starttransfer time_redirect time_namelookup time_pretransfer time_total http_code content_type <<< "$response"
     
@@ -43,6 +76,7 @@ for ((i=1; i<=ATTEMPTS; i++)); do
     case $http_code in
         200) http_status="200 OK" ;;
         301) http_status="301 Moved" ;;
+        401) http_status="401 Unauthorized" ;;
         404) http_status="404 Not Found" ;;
         500) http_status="500 Error" ;;
         *) http_status="$http_code" ;;
